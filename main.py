@@ -225,6 +225,46 @@ class SelfLearningPlugin(star.Star):
         if handler:
             await handler.handle(event, req)
 
+    # Bot Reply Hook
+
+    @filter.on_decorating_result()
+    async def persist_bot_reply(self, event: AstrMessageEvent):
+        """Intercept all outgoing Bot messages and save them to the database.
+
+        This hook fires before each reply is sent, giving us the opportunity to
+        persist the Bot's response text so that ExpressionPatternLearner can build
+        valid User→Bot conversation pairs when performing style analysis.
+        """
+        try:
+            if self._shutting_down:
+                return
+
+            db = getattr(self, 'db_manager', None)
+            if not db or not db.engine:
+                return
+
+            if not self.plugin_config or not self.plugin_config.enable_message_capture:
+                return
+
+            result = event.get_result()
+            if not result:
+                return
+
+            text = result.get_plain_text()
+            if not text or not text.strip():
+                return
+
+            group_id = event.get_group_id() or event.get_sender_id()
+            if not group_id:
+                return
+
+            self._track_task(asyncio.create_task(
+                db.save_bot_message(group_id=str(group_id), message=text)
+            ))
+
+        except Exception as e:
+            logger.error(f"保存Bot回复消息失败: {e}", exc_info=True)
+
     # 命令处理器（薄委托）
 
     @filter.command("learning_status")
